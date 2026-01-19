@@ -68,10 +68,6 @@ mongoose.connect(process.env.MONGODB_URI, {
 })
 .catch((error) => {
   console.error('❌ MongoDB connection error:', error);
-  // Don't exit process in dev, just log error so server stays up for health check
-  if (process.env.NODE_ENV !== 'development') {
-    process.exit(1);
-  }
 });
 
 // Middleware to check database connection

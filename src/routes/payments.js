@@ -7,11 +7,17 @@ const Booking = require('../models/Booking');
 
 const router = express.Router();
 
-// Initialize Razorpay
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET
-});
+const hasRazorpayConfig = process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET;
+
+let razorpay = null;
+if (hasRazorpayConfig) {
+  razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET
+  });
+} else {
+  console.warn('Razorpay keys are not configured. Payment routes are disabled until keys are set.');
+}
 
 // Create Razorpay order
 router.post('/create-order', [
@@ -21,6 +27,13 @@ router.post('/create-order', [
   body('bookingId').notEmpty().withMessage('Booking ID is required')
 ], async (req, res) => {
   try {
+    if (!razorpay) {
+      return res.status(503).json({
+        success: false,
+        message: 'Payment service is not configured'
+      });
+    }
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -97,6 +110,13 @@ router.post('/verify-payment', [
   body('bookingId').notEmpty().withMessage('Booking ID is required')
 ], async (req, res) => {
   try {
+    if (!razorpay) {
+      return res.status(503).json({
+        success: false,
+        message: 'Payment service is not configured'
+      });
+    }
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -180,6 +200,13 @@ router.post('/verify-payment', [
 // Get payment details
 router.get('/payment/:paymentId', auth, async (req, res) => {
   try {
+    if (!razorpay) {
+      return res.status(503).json({
+        success: false,
+        message: 'Payment service is not configured'
+      });
+    }
+
     const { paymentId } = req.params;
 
     // Verify booking belongs to user
@@ -228,6 +255,13 @@ router.post('/refund', [
   body('reason').optional().isString().withMessage('Reason must be a string')
 ], async (req, res) => {
   try {
+    if (!razorpay) {
+      return res.status(503).json({
+        success: false,
+        message: 'Payment service is not configured'
+      });
+    }
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -311,6 +345,13 @@ router.post('/refund', [
 // Webhook for payment status updates
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
+    if (!process.env.RAZORPAY_WEBHOOK_SECRET && !process.env.RAZORPAY_KEY_SECRET) {
+      return res.status(503).json({
+        success: false,
+        message: 'Webhook secret is not configured'
+      });
+    }
+
     const signature = req.headers['x-razorpay-signature'];
     const body = req.body;
 

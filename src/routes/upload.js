@@ -6,11 +6,9 @@ const { auth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Configure storage
-const storage = multer.diskStorage({
+const videoStorage = multer.diskStorage({
   destination: function (req, file, cb) {
     const uploadDir = path.join(__dirname, '../../uploads/videos');
-    // Create directory if it doesn't exist
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
@@ -22,8 +20,22 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
-  storage: storage,
+const imageStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadDir = path.join(__dirname, '../../uploads/images');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'image-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const uploadVideo = multer({ 
+  storage: videoStorage,
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit
   fileFilter: (req, file, cb) => {
     const filetypes = /mp4|mov|avi|mkv/;
@@ -37,7 +49,21 @@ const upload = multer({
   }
 });
 
-// Mock AI Analysis Function
+const uploadImage = multer({
+  storage: imageStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const filetypes = /jpg|jpeg|png|webp/;
+    const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = filetypes.test(file.mimetype);
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb('Error: Images Only!');
+    }
+  }
+});
+
 const runAIAnalysis = async (filePath) => {
   return new Promise((resolve) => {
     // Simulate processing delay
@@ -52,8 +78,7 @@ const runAIAnalysis = async (filePath) => {
   });
 };
 
-// Upload Video Endpoint
-router.post('/video', auth, upload.single('video'), async (req, res) => {
+router.post('/video', auth, uploadVideo.single('video'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -62,8 +87,6 @@ router.post('/video', auth, upload.single('video'), async (req, res) => {
       });
     }
 
-    // Generate public URL (assuming server is serving 'uploads' static folder)
-    // Adjust logic if using S3 or other storage
     const fileUrl = `/uploads/videos/${req.file.filename}`;
     
     // Run Mock AI Analysis
@@ -82,6 +105,31 @@ router.post('/video', auth, upload.single('video'), async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Video upload failed'
+    });
+  }
+});
+
+router.post('/image', auth, uploadImage.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No image file uploaded'
+      });
+    }
+
+    const fileUrl = `/uploads/images/${req.file.filename}`;
+
+    res.json({
+      success: true,
+      url: fileUrl,
+      fileName: req.file.filename
+    });
+  } catch (error) {
+    console.error('Image upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Image upload failed'
     });
   }
 });

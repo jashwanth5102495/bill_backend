@@ -3,6 +3,7 @@ const router = express.Router();
 const User = require('../models/User');
 const Billboard = require('../models/Billboard');
 const Booking = require('../models/Booking');
+const BusinessProfile = require('../models/BusinessProfile');
 const { auth, isAdmin } = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
 
@@ -130,18 +131,34 @@ router.get('/owners', auth, isAdmin, async (req, res) => {
   }
 });
 
-// List Business Owners
+// List Business Owners with business profiles
 router.get('/business-owners', auth, isAdmin, async (req, res) => {
   try {
     const owners = await User.find({ role: 'business' })
       .select('-password')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const ownerIds = owners.map(owner => owner._id);
+
+    const profiles = await BusinessProfile.find({ userId: { $in: ownerIds } }).lean();
+
+    const profilesByUserId = profiles.reduce((map, profile) => {
+      map[profile.userId.toString()] = profile;
+      return map;
+    }, {});
+
+    const ownersWithProfiles = owners.map(owner => ({
+      ...owner,
+      businessProfile: profilesByUserId[owner._id.toString()] || null,
+    }));
       
     res.json({
       success: true,
-      owners
+      owners: ownersWithProfiles
     });
   } catch (error) {
+    console.error('Fetch business owners error:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Server error while fetching business owners' 
