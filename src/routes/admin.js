@@ -572,8 +572,9 @@ router.post('/analyze-with-n8n', auth, isAdmin, async (req, res) => {
 // Webhook for n8n to send back analysis results
 router.post('/analysis-webhook', async (req, res) => {
   try {
-    const { analysis } = req.body;
-    if (!analysis) {
+    const analysis = req.body.analysis || req.body; // Handle both {analysis: {...}} and direct {...}
+    if (!analysis || Object.keys(analysis).length === 0) {
+      console.error('❌ Received empty analysis data from n8n');
       return res.status(400).json({ success: false, message: 'Analysis data is required' });
     }
     
@@ -583,7 +584,7 @@ router.post('/analysis-webhook', async (req, res) => {
       timestamp: new Date()
     };
     
-    console.log('✅ Received analysis results from n8n');
+    console.log('✅ Received analysis results from n8n:', JSON.stringify(latestAnalysis, null, 2));
     res.json({ success: true, message: 'Analysis results updated' });
   } catch (error) {
     console.error('Analysis webhook error:', error);
