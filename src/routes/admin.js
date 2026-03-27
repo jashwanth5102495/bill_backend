@@ -6,8 +6,14 @@ const Booking = require('../models/Booking');
 const BusinessProfile = require('../models/BusinessProfile');
 const { auth, isAdmin } = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
+const axios = require('axios');
+const FormData = require('form-data');
+const { Readable } = require('stream');
 
 const SLOT_DURATION_SECONDS = 21600; // 6 hours
+
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8653766405:AAGrWcWCOAyg70RCeWBWEhUIY_3xwG9ZGo';
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID; // User needs to provide this in .env
 
 // Helper to sanitize booking price if corrupted
 async function sanitizeBooking(booking) {
@@ -417,6 +423,103 @@ router.get('/export-bookings-csv', auth, isAdmin, async (req, res) => {
   } catch (error) {
     console.error('Export CSV error:', error);
     res.status(500).json({ success: false, message: 'Failed to export CSV: ' + error.message });
+  }
+});
+
+// Analyze with n8n (Send CSV to Telegram)
+router.post('/analyze-with-n8n', auth, isAdmin, async (req, res) => {
+  try {
+    const chat_id = TELEGRAM_CHAT_ID || req.body.chat_id;
+    if (!chat_id) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Telegram Chat ID not configured. Please add TELEGRAM_CHAT_ID to your environment variables or provide it in the request.' 
+      });
+    }
+
+    const bookings = await Booking.find()
+      .populate('userId', 'name email phoneNumber')
+      .sort({ createdAt: -1 });
+
+    if (!bookings || bookings.length === 0) {
+      return res.status(404).json({ success: false, message: 'No bookings found to analyze' });
+    }
+
+    // CSV Headers
+    const headers = [
+      'Booking ID', 'Date Booked', 'User Name', 'User Email', 'User Phone',
+      'Billboard Name', 'Location', 'Booking Type', 'Start Date', 'End Date',
+      'Start Time', 'End Time', 'Duration (hrs)', 'Price (₹)', 'Booking Status',
+      'Payment Status', 'Payment ID', 'Razorpay Order ID'
+    ];
+
+    // CSV Rows
+    const rows = bookings.map(booking => [
+      booking._id,
+      new Date(booking.createdAt).toLocaleString(),
+      booking.userId?.name || 'N/A',
+      booking.userId?.email || 'N/A',
+      booking.userId?.phoneNumber || 'N/A',
+      booking.billboardName || 'N/A',
+      booking.location || 'N/A',
+      booking.bookingType,
+      new Date(booking.startDate).toLocaleDateString(),
+      new Date(booking.endDate).toLocaleDateString(),
+      booking.startTime,
+      booking.endTime,
+      booking.duration,
+      booking.price || booking.amount || 0,
+      booking.status,
+      booking.paymentStatus,
+      booking.paymentId || booking.razorpayPaymentId || 'N/A',
+      booking.razorpayOrderId || 'N/A'
+    ]);
+
+    // Construct CSV string
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => {
+        const cellStr = String(cell === null || cell === undefined ? '' : cell).replace(/"/g, '""');
+        return `"${cellStr}"`;
+      }).join(','))
+    ].join('\n');
+
+    // Create a readable stream from the CSV content
+    const stream = new Readable();
+    stream.push(csvContent);
+    stream.push(null);
+
+    // Prepare form data for Telegram
+    const form = new FormData();
+    form.append('chat_id', chat_id);
+    form.append('document', stream, {
+      filename: `analysis_export_${new Date().toISOString().split('T')[0]}.csv`,
+      contentType: 'text/csv',
+    });
+    form.append('caption', '📊 New CSV data for n8n analysis');
+
+    // Send to Telegram
+    const telegramResponse = await axios.post(
+      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`,
+      form,
+      { headers: form.getHeaders() }
+    );
+
+    if (telegramResponse.data.ok) {
+      res.json({ success: true, message: 'CSV sent to Telegram successfully' });
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        message: 'Telegram API error: ' + telegramResponse.data.description 
+      });
+    }
+
+  } catch (error) {
+    console.error('Analyze with n8n error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to send data to n8n: ' + (error.response?.data?.description || error.message) 
+    });
   }
 });
 
