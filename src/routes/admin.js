@@ -12,8 +12,11 @@ const { Readable } = require('stream');
 
 const SLOT_DURATION_SECONDS = 21600; // 6 hours
 
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8653766405:AAGrWcWCOAyg70RCeWBWEhUIY_3xwG9ZGo';
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID; // User needs to provide this in .env
+const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '8653766405:AAGrWcWCOAyg70RCeWBWEhUIY_3xwG9ZGo').trim();
+const TELEGRAM_CHAT_ID = (process.env.TELEGRAM_CHAT_ID || '').trim(); // User needs to provide this in .env
+
+// Simple in-memory storage for the latest analysis (in production, this would be a DB model)
+let latestAnalysis = null;
 
 // Helper to sanitize booking price if corrupted
 async function sanitizeBooking(booking) {
@@ -499,15 +502,22 @@ router.post('/analyze-with-n8n', auth, isAdmin, async (req, res) => {
     form.append('caption', '📊 New CSV data for n8n analysis');
 
     // Send to Telegram
+    console.log(`Sending CSV to Telegram (Chat ID: ${chat_id})...`);
     const telegramResponse = await axios.post(
       `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`,
       form,
-      { headers: form.getHeaders() }
+      { 
+        headers: form.getHeaders(),
+        timeout: 10000 // 10 second timeout
+      }
     );
 
+    console.log('Telegram API Response:', telegramResponse.data);
+
     if (telegramResponse.data.ok) {
-      res.json({ success: true, message: 'CSV sent to Telegram successfully' });
+      res.json({ success: true, message: 'CSV sent to Telegram successfully', telegram_message_id: telegramResponse.data.result.message_id });
     } else {
+      console.error('Telegram API error details:', telegramResponse.data);
       res.status(500).json({ 
         success: false, 
         message: 'Telegram API error: ' + telegramResponse.data.description 
@@ -515,12 +525,43 @@ router.post('/analyze-with-n8n', auth, isAdmin, async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Analyze with n8n error:', error);
+    console.error('Analyze with n8n error details:', {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    });
     res.status(500).json({ 
       success: false, 
       message: 'Failed to send data to n8n: ' + (error.response?.data?.description || error.message) 
     });
   }
+});
+
+// Webhook for n8n to send back analysis results
+router.post('/analysis-webhook', async (req, res) => {
+  try {
+    const { analysis } = req.body;
+    if (!analysis) {
+      return res.status(400).json({ success: false, message: 'Analysis data is required' });
+    }
+    
+    // In production, we'd save this to a database model like "Analysis"
+    latestAnalysis = {
+      ...analysis,
+      timestamp: new Date()
+    };
+    
+    console.log('✅ Received analysis results from n8n');
+    res.json({ success: true, message: 'Analysis results updated' });
+  } catch (error) {
+    console.error('Analysis webhook error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Endpoint for frontend to fetch latest analysis
+router.get('/latest-analysis', auth, isAdmin, async (req, res) => {
+  res.json({ success: true, analysis: latestAnalysis });
 });
 
 module.exports = router;
