@@ -335,4 +335,89 @@ router.get('/availability', auth, isAdmin, async (req, res) => {
   }
 });
 
+// Export Bookings and Sales as CSV
+router.get('/export-bookings-csv', auth, isAdmin, async (req, res) => {
+  try {
+    console.log('CSV Export requested by admin:', req.user.id);
+    
+    const bookings = await Booking.find()
+      .populate('userId', 'name email phoneNumber')
+      .sort({ createdAt: -1 });
+
+    if (!bookings || bookings.length === 0) {
+      // Instead of 404, return a 200 with headers and no data or a specific message
+      const headers = ['Message'];
+      const csvContent = headers.join(',') + '\n' + '"No bookings found to export"';
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=bookings_export_empty.csv');
+      return res.status(200).send(csvContent);
+    }
+
+    // CSV Headers
+    const headers = [
+      'Booking ID',
+      'Date Booked',
+      'User Name',
+      'User Email',
+      'User Phone',
+      'Billboard Name',
+      'Location',
+      'Booking Type',
+      'Start Date',
+      'End Date',
+      'Start Time',
+      'End Time',
+      'Duration (hrs)',
+      'Price (₹)',
+      'Booking Status',
+      'Payment Status',
+      'Payment ID',
+      'Razorpay Order ID'
+    ];
+
+    // CSV Rows
+    const rows = bookings.map(booking => {
+      // Since billboardId is a String in schema, population might not work.
+      // We use the fields already present on the booking model.
+      return [
+        booking._id,
+        new Date(booking.createdAt).toLocaleString(),
+        booking.userId?.name || 'N/A',
+        booking.userId?.email || 'N/A',
+        booking.userId?.phoneNumber || 'N/A',
+        booking.billboardName || 'N/A',
+        booking.location || 'N/A',
+        booking.bookingType,
+        new Date(booking.startDate).toLocaleDateString(),
+        new Date(booking.endDate).toLocaleDateString(),
+        booking.startTime,
+        booking.endTime,
+        booking.duration,
+        booking.price || booking.amount || 0,
+        booking.status,
+        booking.paymentStatus,
+        booking.paymentId || booking.razorpayPaymentId || 'N/A',
+        booking.razorpayOrderId || 'N/A'
+      ];
+    });
+
+    // Construct CSV string manually
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => {
+        const cellStr = String(cell === null || cell === undefined ? '' : cell).replace(/"/g, '""');
+        return `"${cellStr}"`;
+      }).join(','))
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=bookings_export.csv');
+    res.status(200).send(csvContent);
+
+  } catch (error) {
+    console.error('Export CSV error:', error);
+    res.status(500).json({ success: false, message: 'Failed to export CSV: ' + error.message });
+  }
+});
+
 module.exports = router;
