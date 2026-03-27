@@ -12,7 +12,7 @@ const { Readable } = require('stream');
 
 const SLOT_DURATION_SECONDS = 21600; // 6 hours
 
-const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '8653766405:AAGrWcWCOAyg70RCeWBWEhUIY_3xwG9ZGo').trim();
+const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '8653766405:AAGrWcWCOAyg70RCeW-BWEhUIY_3xwG9ZGo').trim();
 const TELEGRAM_CHAT_ID = (process.env.TELEGRAM_CHAT_ID || '').trim(); // User needs to provide this in .env
 
 // Simple in-memory storage for the latest analysis (in production, this would be a DB model)
