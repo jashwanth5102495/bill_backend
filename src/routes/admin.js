@@ -520,48 +520,34 @@ router.post('/analyze-with-n8n', auth, isAdmin, async (req, res) => {
       // We'll continue to Telegram even if n8n webhook fails
     }
 
-    // 2. Send to Telegram for notification/manual view
-    console.log(`Sending data to Telegram (Chat ID: ${chat_id})...`);
-    
-    const messageHeader = "📊 *New CSV Data for Analysis*\n\n";
-    const formattedContent = `\`\`\`csv\n${csvContent}\n\`\`\``;
+    // 2. Send CSV as a DOCUMENT to Telegram (Correct format for Bot analysis)
+    console.log(`Sending CSV document to Telegram (Chat ID: ${chat_id})...`);
     
     let telegramResponse;
     try {
-      if ((messageHeader.length + formattedContent.length) < 4000) {
-        telegramResponse = await axios.post(
-          `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-          {
-            chat_id: chat_id,
-            text: messageHeader + formattedContent,
-            parse_mode: 'Markdown'
-          },
-          { timeout: 10000 }
-        );
-      } else {
-        const stream = new Readable();
-        stream.push(csvContent);
-        stream.push(null);
+      const stream = new Readable();
+      stream.push(csvContent);
+      stream.push(null);
 
-        const form = new FormData();
-        form.append('chat_id', chat_id);
-        form.append('document', stream, {
-          filename: `analysis_export_${new Date().toISOString().split('T')[0]}.csv`,
-          contentType: 'text/csv',
-        });
-        form.append('caption', '📊 New CSV data for n8n analysis');
+      const form = new FormData();
+      form.append('chat_id', chat_id);
+      form.append('document', stream, {
+        filename: `analysis_export_${new Date().toISOString().split('T')[0]}.csv`,
+        contentType: 'text/csv',
+      });
+      form.append('caption', '📊 New CSV data for n8n analysis');
 
-        telegramResponse = await axios.post(
-          `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`,
-          form,
-          { 
-            headers: form.getHeaders(),
-            timeout: 10000 
-          }
-        );
-      }
+      telegramResponse = await axios.post(
+        `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`,
+        form,
+        { 
+          headers: form.getHeaders(),
+          timeout: 10000 
+        }
+      );
+      console.log('Telegram Document Sent:', telegramResponse.data?.ok);
     } catch (teleError) {
-      console.error('Telegram send failed:', teleError.message);
+      console.error('Telegram document send failed:', teleError.response?.data || teleError.message);
     }
 
     res.json({ 
