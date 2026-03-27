@@ -14,6 +14,7 @@ const SLOT_DURATION_SECONDS = 21600; // 6 hours
 
 const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '8653766405:AAGrWcWCOAyg70RCeW-BWEhUIY_3xwG9ZGo').trim();
 const TELEGRAM_CHAT_ID = (process.env.TELEGRAM_CHAT_ID || '').trim(); // User needs to provide this in .env
+const N8N_WEBHOOK_URL = 'https://jash5144.app.n8n.cloud/webhook/csv-analysis';
 
 // Simple in-memory storage for the latest analysis (in production, this would be a DB model)
 let latestAnalysis = null;
@@ -487,61 +488,87 @@ router.post('/analyze-with-n8n', auth, isAdmin, async (req, res) => {
       }).join(','))
     ].join('\n');
 
-    // Send to Telegram
-    console.log(`Sending CSV data to Telegram (Chat ID: ${chat_id})...`);
+    // 1. Send CSV to n8n Webhook directly for JSON analysis
+    console.log('Sending CSV to n8n webhook for direct analysis...');
+    const n8nForm = new FormData();
+    const n8nStream = new Readable();
+    n8nStream.push(csvContent);
+    n8nStream.push(null);
     
-    // Check if the content is small enough to send as a text message (max 4096 chars)
-    // We'll leave some room for the header and Markdown formatting
+    n8nForm.append('file', n8nStream, {
+      filename: 'analysis_export.csv',
+      contentType: 'text/csv',
+    });
+
+    let n8nResponse;
+    try {
+      n8nResponse = await axios.post(N8N_WEBHOOK_URL, n8nForm, {
+        headers: n8nForm.getHeaders(),
+        timeout: 30000 // n8n analysis might take a bit longer
+      });
+      
+      if (n8nResponse.data) {
+        // Update latest analysis immediately with the response from n8n
+        latestAnalysis = {
+          ...n8nResponse.data,
+          timestamp: new Date()
+        };
+        console.log('✅ Direct analysis from n8n received successfully');
+      }
+    } catch (n8nError) {
+      console.error('Error sending to n8n webhook:', n8nError.message);
+      // We'll continue to Telegram even if n8n webhook fails
+    }
+
+    // 2. Send to Telegram for notification/manual view
+    console.log(`Sending data to Telegram (Chat ID: ${chat_id})...`);
+    
     const messageHeader = "📊 *New CSV Data for Analysis*\n\n";
     const formattedContent = `\`\`\`csv\n${csvContent}\n\`\`\``;
     
     let telegramResponse;
-    if ((messageHeader.length + formattedContent.length) < 4000) {
-      // Send as text message
-      telegramResponse = await axios.post(
-        `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-        {
-          chat_id: chat_id,
-          text: messageHeader + formattedContent,
-          parse_mode: 'Markdown'
-        },
-        { timeout: 10000 }
-      );
-    } else {
-      // Send as document if it's too large
-      const stream = new Readable();
-      stream.push(csvContent);
-      stream.push(null);
+    try {
+      if ((messageHeader.length + formattedContent.length) < 4000) {
+        telegramResponse = await axios.post(
+          `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+          {
+            chat_id: chat_id,
+            text: messageHeader + formattedContent,
+            parse_mode: 'Markdown'
+          },
+          { timeout: 10000 }
+        );
+      } else {
+        const stream = new Readable();
+        stream.push(csvContent);
+        stream.push(null);
 
-      const form = new FormData();
-      form.append('chat_id', chat_id);
-      form.append('document', stream, {
-        filename: `analysis_export_${new Date().toISOString().split('T')[0]}.csv`,
-        contentType: 'text/csv',
-      });
-      form.append('caption', '📊 New CSV data for n8n analysis');
+        const form = new FormData();
+        form.append('chat_id', chat_id);
+        form.append('document', stream, {
+          filename: `analysis_export_${new Date().toISOString().split('T')[0]}.csv`,
+          contentType: 'text/csv',
+        });
+        form.append('caption', '📊 New CSV data for n8n analysis');
 
-      telegramResponse = await axios.post(
-        `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`,
-        form,
-        { 
-          headers: form.getHeaders(),
-          timeout: 10000 
-        }
-      );
+        telegramResponse = await axios.post(
+          `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`,
+          form,
+          { 
+            headers: form.getHeaders(),
+            timeout: 10000 
+          }
+        );
+      }
+    } catch (teleError) {
+      console.error('Telegram send failed:', teleError.message);
     }
 
-    console.log('Telegram API Response:', telegramResponse.data);
-
-    if (telegramResponse.data.ok) {
-      res.json({ success: true, message: 'CSV sent to Telegram successfully', telegram_message_id: telegramResponse.data.result.message_id });
-    } else {
-      console.error('Telegram API error details:', telegramResponse.data);
-      res.status(500).json({ 
-        success: false, 
-        message: 'Telegram API error: ' + telegramResponse.data.description 
-      });
-    }
+    res.json({ 
+      success: true, 
+      message: 'Data sent for analysis', 
+      analysis: latestAnalysis 
+    });
 
   } catch (error) {
     console.error('Analyze with n8n error details:', {
